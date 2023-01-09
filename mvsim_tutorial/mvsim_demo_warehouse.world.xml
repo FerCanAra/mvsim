@@ -227,6 +227,15 @@
 	<block class="pallet"> <init_pose>10.5 1.15 80</init_pose> </block>
 	<block class="pallet"> <init_pose>10.2 0.1 86</init_pose> </block>
 
+	<for var="i" from="0" to="4">
+		<for var="j" from="0" to="4">
+			<block class="pallet">
+				<init_pose>$f{-8+i*1.1} $f{1.1*j} 0</init_pose>
+			</block>
+		</for>
+	</for>
+
+
 	<block class="chair_x3"> <init_pose>-14.5 1 90</init_pose> </block>
 	<block class="chair_x3"> <init_pose>-14.5 3 90</init_pose> </block>
 
