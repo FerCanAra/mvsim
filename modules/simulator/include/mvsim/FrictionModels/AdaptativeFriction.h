@@ -40,8 +40,8 @@ class AdaptativeFriction : public FrictionBase
 	const std::vector<ZoneParams>& getZones() const { return zones_; }
 
    private:
-	double mu_;	 //!< Coeficiente de fricción
-	double C_damping_;	//!< Amortiguamiento interno de la rueda
+	double mu_;	
+	double C_damping_;
 	double Crr_;
     double F_friction_lon_act;
 	std::vector<ZoneParams> zones_;
