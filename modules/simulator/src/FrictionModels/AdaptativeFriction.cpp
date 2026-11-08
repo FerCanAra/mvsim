@@ -1,6 +1,9 @@
 // Fernando Cañadas Aránega, 5 Nov 2025
 
 #include <mvsim/FrictionModels/AdaptativeFriction.h>
+#include <mrpt/poses/CPose3D.h>
+
+#include <cmath>
 #include <mvsim/VehicleBase.h>
 #include <mvsim/World.h>
 
@@ -18,6 +21,9 @@ AdaptativeFriction::AdaptativeFriction(
 		throw std::runtime_error("<friction>...</friction> XML node was expected!!");
 
 	if (!node) return;
+
+	if (const auto* n = node->first_node("lateral_mu_factor"); n && n->value())
+		lateral_mu_factor_ = atof(n->value());
 
 	const rapidxml::xml_node<char>* zonesNode = node->first_node("zones");
 	if (!zonesNode) return;
@@ -95,12 +101,24 @@ mrpt::math::TVector2D AdaptativeFriction::evaluate_friction(
 	const mrpt::math::TVector2D vel_w = wRot.inverseComposePoint(input.wheelCogLocalVel);
 
 	// Action/Reaction, slippage, etc:
-	// DUDA PARA JL; EL MODELO NO TIENE EN CUENTA LA MASA DEL VEHICULO?
 	// --------------------------------------
 	const double mu = mu_;
 	const double gravity = myVehicle_.parent()->get_gravity();
 	const double partial_mass = input.Fz / gravity + input.wheel.mass;
 	const double max_friction = mu * partial_mass * gravity;
+
+	// Rolling resistance (Crr): modelled as a resistive torque at the wheel axis
+	// that opposes the wheel rotation, with magnitude Crr * N * R, where
+	// N = m_pw * g * cos(pitch) is the normal force on the wheel. The sign of the
+	// wheel angular velocity is smoothed with tanh() to avoid chattering at rest.
+	// It enters the wheel torque balance in the same way as the damping term.
+	double yaw_r = 0.0, pitch_r = 0.0, roll_r = 0.0;
+	myVehicle_.getCPose3D().getYawPitchRoll(yaw_r, pitch_r, roll_r);
+	const double R_wheel = 0.5 * input.wheel.diameter;
+	const double normal_force = partial_mass * gravity * std::cos(pitch_r);
+	constexpr double w_eps = 0.05;	// [rad/s] smoothing of sign(w)
+	const double rolling_torque =
+		Crr_local * normal_force * R_wheel * std::tanh(input.wheel.getW() / w_eps);
 
 	// 1) Lateral friction (decoupled sub-problem)
 	// --------------------------------------------
@@ -109,7 +127,9 @@ mrpt::math::TVector2D AdaptativeFriction::evaluate_friction(
 		// Impulse required to step the lateral slippage:
 		wheel_lateral_friction = -vel_w.y * partial_mass / input.context.dt;
 
-		wheel_lateral_friction = std::clamp(wheel_lateral_friction, -max_friction, max_friction);
+		const double max_lat_friction = lateral_mu_factor_ * max_friction;
+		wheel_lateral_friction =
+			std::clamp(wheel_lateral_friction, -max_lat_friction, max_lat_friction);
 	}
 
 	// 2) Longitudinal friction (decoupled sub-problem)
@@ -136,15 +156,17 @@ mrpt::math::TVector2D AdaptativeFriction::evaluate_friction(
 	// input.wheel_speed.x, 0.0);
 
 	const double I_yy = input.wheel.Iyy;
-	double F_friction_lon =
-		(input.motorTorque - I_yy * desired_wheel_alpha - C_damping * input.wheel.getW()) / R;
+	double F_friction_lon = (input.motorTorque - I_yy * desired_wheel_alpha -
+							 C_damping * input.wheel.getW() - rolling_torque) /
+							R;
 
 	// Slippage: The friction with the ground is not infinite:
 	F_friction_lon = std::clamp(F_friction_lon, -max_friction, max_friction);
 
 	// Recalc wheel ang. velocity impulse with this reduced force:
-	const double actual_wheel_alpha =
-		(input.motorTorque - R * F_friction_lon - C_damping * input.wheel.getW()) / I_yy;
+	const double actual_wheel_alpha = (input.motorTorque - R * F_friction_lon -
+									   C_damping * input.wheel.getW() - rolling_torque) /
+									  I_yy;
 
 	// std::cout << "[AdaptativeFriction] Evaluating friction for pose: ("
 	// 	<< pose.x << "," << pose.y << ")  mu=" << mu_local << std::endl;
@@ -172,6 +194,7 @@ mrpt::math::TVector2D AdaptativeFriction::evaluate_friction(
 		logger->updateColumn("F_friction_lon", F_friction_lon);
 		logger->updateColumn("actual_wheel_alpha", actual_wheel_alpha);
 		logger->updateColumn("motor_torque", input.motorTorque);
+		logger->updateColumn("rolling_torque", rolling_torque);
 	}
 
 	return res;

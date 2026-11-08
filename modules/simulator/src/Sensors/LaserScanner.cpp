@@ -11,6 +11,8 @@
 #include <mrpt/opengl/COpenGLScene.h>
 #include <mrpt/opengl/stock_objects.h>
 #include <mrpt/random.h>
+
+#include <functional>
 #include <mrpt/version.h>
 #include <mvsim/Sensors/LaserScanner.h>
 #include <mvsim/VehicleBase.h>
@@ -370,8 +372,14 @@ void LaserScanner::internal_simulate_lidar_2d_mode(const TSimulContext& context)
 		double A = sensorPose.phi() + (scan.rightToLeft ? -0.5 : +0.5) * scan.aperture;
 		const double AA = (scan.rightToLeft ? 1.0 : -1.0) * (scan.aperture / (nRays - 1));
 
-		// Each thread must create its own rng:
+		// Each thread must create its own rng (seeded from <random_seed>, if set):
 		thread_local mrpt::random::CRandomGenerator rnd;
+		thread_local bool rnd_seeded = false;
+		if (!rnd_seeded)
+		{
+			seedNoiseGenerator(rnd);
+			rnd_seeded = true;
+		}
 
 		for (size_t i = 0; i < nRays; i++, A += AA)
 		{
@@ -615,8 +623,14 @@ void LaserScanner::simulateOn3DScene(mrpt::opengl::COpenGLScene& world3DScene)
 			auto tleStore =
 				mrpt::system::CTimeLoggerEntry(world_->getTimeLogger(), "sensor.2Dlidar.noise");
 
-			// Each thread must create its own rng:
+			// Each thread must create its own rng (seeded from <random_seed>, if set):
 			thread_local mrpt::random::CRandomGenerator rng;
+			thread_local bool rng_seeded = false;
+			if (!rng_seeded)
+			{
+				seedNoiseGenerator(rng);
+				rng_seeded = true;
+			}
 
 			float* d = depthImage.data();
 			const size_t N = depthImage.size();
@@ -711,4 +725,14 @@ void LaserScanner::registerOnServer(mvsim::Client& c)
 	if (!publishTopic_.empty())
 		c.advertiseTopic<mvsim_msgs::ObservationLidar2D>(publishTopic_ + "_scan"s);
 #endif
+}
+
+void LaserScanner::seedNoiseGenerator(mrpt::random::CRandomGenerator& rng) const
+{
+	const int seed = world_->random_seed();
+	if (seed < 0) return;  // keep the default (non-deterministic) seed
+	// Different but reproducible streams for each sensor:
+	const uint32_t s = static_cast<uint32_t>(seed) +
+					   static_cast<uint32_t>(std::hash<std::string>{}(getName()) & 0xFFFFFFu);
+	rng.randomize(s);
 }

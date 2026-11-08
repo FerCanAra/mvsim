@@ -10,3 +10,5 @@ mvsim:
     #base_watchdog_timeout: 0.5    # [s]
     #gui_refresh_period: 100       # [ms]
     #period_ms_publish_tf: 20      # [ms]
+    #max_sim_step_per_spin: 0.2    # [s] max. simulated time per loop if the simulation lags behind real time (<=0: no limit)
+  

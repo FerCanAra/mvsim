@@ -153,6 +153,9 @@ class DynamicsDifferential : public VehicleBase
 		/// Maximum abs. value torque (for clamp) [Nm]
 		double max_torque = 100;
 
+		/// Publication rate of the benchmark_params topic [Hz] (<=0: every step)
+		double benchmark_pub_rate = 100.0;
+
 		// See base docs.
 		bool setTwistCommand(const mrpt::math::TTwist2D& t) override
 		{
@@ -182,6 +185,8 @@ class DynamicsDifferential : public VehicleBase
 
 		double joyMaxLinSpeed = 1.0;
 		double joyMaxAngSpeed = 0.5;
+
+		double last_benchmark_pub_time_ = -1e9;	 //!< Simulated time of last publication
 	};
 
 	/** Ideal ("fake") controller, which perfectly and instantaneously

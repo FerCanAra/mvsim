@@ -301,6 +301,17 @@ class MVSimNode
 
 	double t_old_ = -1;
 
+	/// Maximum simulated time advanced in one spin() call [s] (<=0: no limit).
+	/// If the simulation cannot keep up with real time, the remaining time is
+	/// dropped instead of accumulated, so TF and topics keep being published
+	/// regularly (the simulation then runs slower than real time and a warning
+	/// with the real-time factor is issued).
+	double max_sim_step_per_spin_ = 0.2;
+
+	/// Real-time factor monitor (simulated time / wall-clock time)
+	double rtf_wall_acc_ = 0.0, rtf_sim_acc_ = 0.0;
+	mrpt::system::CTicTac tim_rtf_report_;
+
 	/// will be true after a success call to loadWorldModel()
 	bool world_init_ok_ = false;
 

@@ -116,7 +116,6 @@ void DynamicsDifferential::ControllerTwistPID::control_step(
 	double yaw = 0.0, pitch_rad = 0.0, roll = 0.0;
 	double mu = 0.0, damping = 0.0, Crr = 0.0;
 	double zone1 = 0.0, zone2 = 0.0, zone3 = 0.0;
-	double Fx_max = 0.0;
 
 	// 2. PITCH
 	veh_.getCPose3D().getYawPitchRoll(yaw, pitch_rad, roll);
@@ -132,7 +131,6 @@ void DynamicsDifferential::ControllerTwistPID::control_step(
 			mu = fric_adapt->getMu();
 			damping = fric_adapt->getCdamping();
 			Crr = fric_adapt->getCrr();
-			Fx_max = fric_adapt->getLongitudinalForce();
 			zones = fric_adapt->getZones();
 			if (zones.size() >= 3)
 			{
@@ -174,20 +172,19 @@ void DynamicsDifferential::ControllerTwistPID::control_step(
 	double F_total = F_grade + F_roll_Crr;
 	double F_friction_lon = std::clamp(F_total, -max_friction, max_friction);
 
-	double torque_dampinR = damping * actVelR;	// Additional torque [Nm]
-	double torque_dampingL = damping * actVelL;	 // Additional torque [Nm]
-	double torque_damping = (torque_dampinR + torque_dampingL) / 2.0;
-
-	// Usamos el miembro de la clase, no una variable local que lo oculte
-	torque_slope = (F_friction_lon * r) + torque_damping;
-
-	// Logger
-	RCLCPP_INFO(ros_node_->get_logger(), "Total robot mass = %.3f", m);
+	// Damping torque per wheel: tau_D,i = C_D * omega_i, with omega_i = v_i / r
+	const double torque_dampingR = damping * (actVelR / r);	 // [Nm]
+	const double torque_dampingL = damping * (actVelL / r);	 // [Nm]
+	// Estimated slope torque per wheel (positive = opposing forward motion)
+	double torque_slopeR = (F_friction_lon * r) + torque_dampingR;
+	double torque_slopeL = (F_friction_lon * r) + torque_dampingL;
 
 	if (v > -0.01 && v < 0.01)
 	{
-		torque_slope = 0.0;
+		torque_slopeR = 0.0;
+		torque_slopeL = 0.0;
 	}
+	torque_slope = 0.5 * (torque_slopeR + torque_slopeL);  // reported value
 
 	// Configure PID controllers
 	for (auto& pid : PIDs_)
@@ -258,8 +255,26 @@ void DynamicsDifferential::ControllerTwistPID::control_step(
 		pid.max_out = max_torque;
 	}
 
-	// Publish benchmark parameters
+	// Compute the wheel torques (MVSim convention: negative torque = forward)
+	torqueL = -PIDs_[0].compute(spVelL, actVelL, torque_slopeL, ci.context.dt);
+	torqueR = -PIDs_[1].compute(spVelR, actVelR, torque_slopeR, ci.context.dt);
+	co.wheel_torque_l = torqueL;
+	co.wheel_torque_r = torqueR;
+
+	// Publish benchmark parameters at a fixed rate (in simulated time), instead of
+	// at every simulation step, to avoid saturating the ROS 2 middleware.
+	const double now_sim = ci.context.simul_time;
+	// (half a time step of tolerance: summing 1 ms steps gives 0.00999.. instead of 0.01,
+	// which delayed every publication by one step -> 91 Hz instead of 100 Hz)
+	if (benchmark_pub_rate > 0.0 &&
+		(now_sim - last_benchmark_pub_time_) < (1.0 / benchmark_pub_rate) - 0.5 * ci.context.dt)
+	{
+		return;
+	}
+	last_benchmark_pub_time_ = now_sim;
+
 	benchmark_msg::msg::BenchmarkParams message;
+	message.sim_time = now_sim;
 	message.kp = KP;
 	message.ki = KI;
 	message.kd = KD;
@@ -306,7 +321,6 @@ void DynamicsDifferential::ControllerTwistPID::control_step(
 	message.torque_r = torqueR;
 	message.pitch = pitch_rad;
 	message.torque_slope = torque_slope;
-	message.fmax = Fx_max;
 	message.max_friction = max_friction;
 
 	if (benchmark_pub_)
@@ -314,10 +328,6 @@ void DynamicsDifferential::ControllerTwistPID::control_step(
 		benchmark_pub_->publish(message);
 	}
 
-	torqueL = -PIDs_[0].compute(spVelL, actVelL, torque_slope, ci.context.dt);
-	torqueR = -PIDs_[1].compute(spVelR, actVelR, torque_slope, ci.context.dt);
-	co.wheel_torque_l = torqueL;
-	co.wheel_torque_r = torqueR;
 }
 
 void DynamicsDifferential::ControllerTwistPID::load_config(const rapidxml::xml_node<char>& node)
@@ -352,6 +362,7 @@ void DynamicsDifferential::ControllerTwistPID::load_config(const rapidxml::xml_n
 	params["enable_adaptative"] = TParamEntry("%bool", &enable_adaptative);
 	params["full_payload"] = TParamEntry("%bool", &full_payload);
 	params["max_torque"] = TParamEntry("%lf", &max_torque);
+	params["benchmark_pub_rate"] = TParamEntry("%lf", &benchmark_pub_rate);
 
 	// Initial speed
 	params["V"] = TParamEntry("%lf", &setpoint_.vx);

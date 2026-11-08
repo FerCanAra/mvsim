@@ -27,7 +27,7 @@ class AdaptativeFriction : public FrictionBase
 	double getMu() const { return mu_; }
 	double getCdamping() const { return C_damping_; }
 	double getCrr() const { return Crr_; }
-	double getLongitudinalForce() const { return F_friction_lon_act; }
+	double getLateralMuFactor() const { return lateral_mu_factor_; }
 
 	struct ZoneParams
 	{
@@ -42,7 +42,10 @@ class AdaptativeFriction : public FrictionBase
    private:
 	double mu_;	 //!< Coeficiente de fricción
 	double C_damping_;	//!< Amortiguamiento interno de la rueda
-	double Crr_;
+	double Crr_;  //!< Rolling resistance coefficient (dimensionless)
 	std::vector<ZoneParams> zones_;
+	/// Lateral friction limit = lateral_mu_factor * mu * N, in every zone (default 1).
+	/// See DefaultFriction::lateral_mu_factor_.
+	double lateral_mu_factor_ = 1.0;
 };
 }  // namespace mvsim

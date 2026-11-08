@@ -8,6 +8,7 @@
   +-------------------------------------------------------------------------+ */
 
 #include <mrpt/core/lock_helper.h>
+#include <algorithm>
 #include <mrpt/maps/CPointsMapXYZIRT.h>
 #include <mrpt/system/filesystem.h>
 #include <mrpt/system/os.h>	 // kbhit()
@@ -133,6 +134,7 @@ MVSimNode::MVSimNode(rclcpp::Node::SharedPtr& n)
 	localn_.param("gui_refresh_period", gui_refresh_period_ms_, gui_refresh_period_ms_);
 	localn_.param("headless", headless_, headless_);
 	localn_.param("period_ms_publish_tf", period_ms_publish_tf_, period_ms_publish_tf_);
+	localn_.param("max_sim_step_per_spin", max_sim_step_per_spin_, max_sim_step_per_spin_);
 	localn_.param("do_fake_localization", do_fake_localization_, do_fake_localization_);
 	localn_.param("publish_tf_odom2baselink", publish_tf_odom2baselink_, publish_tf_odom2baselink_);
 	localn_.param(
@@ -169,6 +171,9 @@ MVSimNode::MVSimNode(rclcpp::Node::SharedPtr& n)
 
 	period_ms_publish_tf_ =
 		n_->declare_parameter<double>("period_ms_publish_tf", period_ms_publish_tf_);
+
+	max_sim_step_per_spin_ =
+		n_->declare_parameter<double>("max_sim_step_per_spin", max_sim_step_per_spin_);
 
 	do_fake_localization_ =
 		n_->declare_parameter<bool>("do_fake_localization", do_fake_localization_);
@@ -337,11 +342,39 @@ void MVSimNode::spin()
 	{
 		return;
 	}
+
+	// If the simulation is not able to run in real time, do not try to catch up
+	// (each call would take longer than the previous one and TF/topics would stop
+	// being published for seconds). Simulate at most max_sim_step_per_spin_.
+	const double sim_incr = (max_sim_step_per_spin_ > 0.0)
+								? std::min(incr_time, max_sim_step_per_spin_)
+								: incr_time;
+
 	// Simulate:
-	mvsim_world_->run_simulation(incr_time);
+	mvsim_world_->run_simulation(sim_incr);
 
 	// t_old_simul = world.get_simul_time();
 	t_old_ = t_new;
+
+	// Real-time factor monitor:
+	rtf_wall_acc_ += incr_time;  // wall-clock time elapsed (x realtime_factor)
+	rtf_sim_acc_ += sim_incr;  // simulated time actually advanced
+	if (tim_rtf_report_.Tac() > 5.0)
+	{
+		tim_rtf_report_.Tic();
+		const double rtf = rtf_wall_acc_ > 0 ? rtf_sim_acc_ / rtf_wall_acc_ : 1.0;  // 1 = real time
+		if (rtf < 0.95)
+		{
+			ROS12_WARN_THROTTLE(
+				5.0,
+				"[MVSimNode] Simulation running SLOWER than real time "
+				"(real-time factor = %.2f over the last 5 s). Results are not "
+				"valid: reduce the CPU/GPU load (e.g. headless:=True, close RViz "
+				"or the live plots).",
+				rtf);
+		}
+		rtf_wall_acc_ = rtf_sim_acc_ = 0.0;
+	}
 
 	const auto& vehs = mvsim_world_->getListOfVehicles();
 
@@ -937,6 +970,20 @@ void MVSimNode::spinNotifyROS()
 					odoMsg.header.stamp = myNow();
 					odoMsg.header.frame_id = "odom";
 					odoMsg.child_frame_id = "base_link";
+
+					// Velocity in the child (base_link) frame, from the wheel
+					// odometry estimate, as a real robot driver would publish it.
+					// Without it the twist was always zero, so the local
+					// controllers (TEB, MPPI, DWB, RPP) assumed the robot was
+					// stopped at every cycle and their acceleration limits
+					// clipped the commands (|w| <= acc_lim_theta * dt).
+					{
+						const mrpt::math::TTwist2D odoVel = veh->getVelocityLocalOdoEstimate();
+						odoMsg.twist.twist.linear.x = odoVel.vx;
+						odoMsg.twist.twist.linear.y = odoVel.vy;
+						odoMsg.twist.twist.linear.z = 0;
+						odoMsg.twist.twist.angular.z = odoVel.omega;
+					}
 
 					// publish:
 					pubs.pub_odom->publish(odoMsg);

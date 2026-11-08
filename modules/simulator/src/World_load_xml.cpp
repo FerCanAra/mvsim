@@ -6,6 +6,7 @@
   | Distributed under 3-clause BSD License                                  |
   |   See COPYING                                                           |
   +-------------------------------------------------------------------------+ */
+#include <mrpt/random.h>
 #include <mrpt/core/format.h>
 #include <mrpt/core/get_env.h>
 #include <mrpt/core/lock_helper.h>
@@ -96,6 +97,10 @@ void World::load_from_XML(const std::string& xml_text, const std::string& fileNa
 		// Move on to next node:
 		node = node->next_sibling(nullptr);
 	}
+
+	// Seed the global MRPT random generator (used by some sensors) if requested:
+	if (randomSeed_ >= 0)
+		mrpt::random::getRandomGenerator().randomize(static_cast<uint32_t>(randomSeed_));
 
 	internal_initialize();
 }

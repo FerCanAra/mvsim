@@ -13,6 +13,7 @@
 #include <mrpt/opengl/CFBORender.h>
 #include <mrpt/opengl/CPlanarLaserScan.h>
 #include <mrpt/poses/CPose2D.h>
+#include <mrpt/random/RandomGenerators.h>
 #include <mvsim/Sensors/SensorBase.h>
 
 #include <mutex>
@@ -47,6 +48,10 @@ class LaserScanner : public SensorBase
 	void registerOnServer(mvsim::Client& c) override;
 
    protected:
+	/** Seeds a sensor-noise random generator from the world <random_seed>
+	 * parameter (no-op if it is negative). */
+	void seedNoiseGenerator(mrpt::random::CRandomGenerator& rng) const;
+
 	virtual void internalGuiUpdate(
 		const mrpt::optional_ref<mrpt::opengl::COpenGLScene>& viz,
 		const mrpt::optional_ref<mrpt::opengl::COpenGLScene>& physical, bool childrenOnly) override;

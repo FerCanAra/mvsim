@@ -61,12 +61,17 @@ double PID_Controller::compute(double spVel, double actVel, double torque_slope,
     const double Kaw = (enable_antiwindup && KP > 1e-12) ? (KI / KP) : 0.0;
     // OJO: todavía no aplicamos la corrección de antiwindup; primero formamos u_unsat
 
-    // 4.b) Derivada filtrada de primer orden sobre el error:
-    // x_d_dot = N*(e - x_d)  =>  x_d[k] = x_d + dt*N*(e - x_d)
-    // D = KD * x_d
-    const double Nclamped = std::max(0.0, N);
-    d_state += dt * Nclamped * (e - d_state);
-    const double D = KD * d_state;
+    // 4.b) Filtered derivative of the error, D(s) = KD * N*s/(s + N) * E(s):
+    // a first-order low-pass state x_d tracks the error, x_d_dot = N*(e - x_d),
+    // and the filtered derivative is d = N*(e - x_d)  (i.e., d_dot + N*d = N*e_dot).
+    // If N <= 0, the derivative action is disabled.
+    double D = 0.0;
+    if (N > 0.0)
+    {
+        const double d_filt = N * (e - d_state);  // filtered derivative of e
+        D = KD * d_filt;
+        d_state += dt * d_filt;  // forward-Euler update of the low-pass state
+    }
 
     // 4.c) Integramos el I puro (sin back-calc por ahora):
     i_state += KI * e * dt;

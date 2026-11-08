@@ -153,6 +153,10 @@ class World : public mrpt::system::COutputLogger
 	/// friction, etc.
 	double get_gravity() const { return gravity_; }
 
+	/** Seed for sensor-noise random generators, as set with <random_seed> in the
+	 * world XML file (negative value = non-deterministic seed) */
+	int random_seed() const { return randomSeed_; }
+
 	/// Gravity acceleration (Default=9.8 m/s^2). Used to evaluate weights for
 	/// friction, etc.
 	void set_gravity(double accel) { gravity_ = accel; }
@@ -458,6 +462,9 @@ class World : public mrpt::system::COutputLogger
 
 	double ground_truth_rate_ = 50.0;  //!< In Hz.
 
+	/** Seed for the random number generators of sensor noise (<0: random seed) */
+	int randomSeed_ = -1;
+
 	double max_slope_to_collide_ = 0.30;
 	double min_slope_to_collide_ = -0.50;
 
@@ -475,6 +482,7 @@ class World : public mrpt::system::COutputLogger
 		{"ground_truth_rate", {"%lf", &ground_truth_rate_}},
 		{"max_slope_to_collide", {"%lf", &max_slope_to_collide_}},
 		{"min_slope_to_collide", {"%lf", &min_slope_to_collide_}},
+		{"random_seed", {"%i", &randomSeed_}},
 	};
 
 	/** User-defined variables as defined via `<variable name='' value='' />`

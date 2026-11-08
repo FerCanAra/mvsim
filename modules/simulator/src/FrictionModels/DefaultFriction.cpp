@@ -8,6 +8,9 @@
   +-------------------------------------------------------------------------+ */
 
 #include <mvsim/FrictionModels/DefaultFriction.h>
+#include <mrpt/poses/CPose3D.h>
+
+#include <cmath>
 #include <mvsim/VehicleBase.h>
 #include <mvsim/World.h>
 
@@ -18,7 +21,7 @@
 using namespace mvsim;
 
 DefaultFriction::DefaultFriction(VehicleBase& my_vehicle, const rapidxml::xml_node<char>* node)
-	: FrictionBase(my_vehicle), mu_(0.8), C_damping_(1.0),  Crr_(0.02)
+	: FrictionBase(my_vehicle), mu_(0.8), C_damping_(1.0), Crr_(0.0)
 {
 	// Sanity: we can tolerate node==nullptr (=> means use default params).
 	if (node && 0 != strcmp(node->name(), "friction"))
@@ -45,6 +48,15 @@ mrpt::math::TVector2D DefaultFriction::evaluate_friction(
 	const double partial_mass = input.Fz / gravity + input.wheel.mass;
 	const double max_friction = mu * partial_mass * gravity;
 
+	// Rolling resistance (Crr): resistive torque at the wheel axis opposing its
+	// rotation (see AdaptativeFriction). Crr defaults to 0 (no effect).
+	double yaw_r = 0.0, pitch_r = 0.0, roll_r = 0.0;
+	myVehicle_.getCPose3D().getYawPitchRoll(yaw_r, pitch_r, roll_r);
+	const double normal_force = partial_mass * gravity * std::cos(pitch_r);
+	constexpr double w_eps = 0.05;	// [rad/s] smoothing of sign(w)
+	const double rolling_torque = Crr_ * normal_force * (0.5 * input.wheel.diameter) *
+								  std::tanh(input.wheel.getW() / w_eps);
+
 	// 1) Lateral friction (decoupled sub-problem)
 	// --------------------------------------------
 	double wheel_lateral_friction = 0.0;  // direction: +y local wrt the wheel
@@ -52,7 +64,9 @@ mrpt::math::TVector2D DefaultFriction::evaluate_friction(
 		// Impulse required to step the lateral slippage:
 		wheel_lateral_friction = -vel_w.y * partial_mass / input.context.dt;
 
-		wheel_lateral_friction = std::clamp(wheel_lateral_friction, -max_friction, max_friction);
+		const double max_lat_friction = lateral_mu_factor_ * max_friction;
+		wheel_lateral_friction =
+			std::clamp(wheel_lateral_friction, -max_lat_friction, max_lat_friction);
 	}
 
 	// 2) Longitudinal friction (decoupled sub-problem)
@@ -79,15 +93,17 @@ mrpt::math::TVector2D DefaultFriction::evaluate_friction(
 	// input.wheel_speed.x, 0.0);
 
 	const double I_yy = input.wheel.Iyy;
-	double F_friction_lon =
-		(input.motorTorque - I_yy * desired_wheel_alpha - C_damping * input.wheel.getW()) / R;
+	double F_friction_lon = (input.motorTorque - I_yy * desired_wheel_alpha -
+							 C_damping * input.wheel.getW() - rolling_torque) /
+							R;
 
 	// Slippage: The friction with the ground is not infinite:
 	F_friction_lon = std::clamp(F_friction_lon, -max_friction, max_friction);
 	
 	// Recalc wheel ang. velocity impulse with this reduced force:
-	const double actual_wheel_alpha =
-		(input.motorTorque - R * F_friction_lon - C_damping * input.wheel.getW()) / I_yy;
+	const double actual_wheel_alpha = (input.motorTorque - R * F_friction_lon -
+									   C_damping * input.wheel.getW() - rolling_torque) /
+									  I_yy;
 
 	// Apply impulse to wheel's spinning:
 	input.wheel.setW(input.wheel.getW() + actual_wheel_alpha * input.context.dt);
